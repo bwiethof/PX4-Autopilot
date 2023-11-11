@@ -1,0 +1,5 @@
+menuconfig MODULES_VISUAL_SLAM
+    bool "visual_slam"
+    default y
+    ---help---
+        Enable Visual SLAM Module
