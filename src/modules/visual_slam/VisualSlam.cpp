@@ -206,6 +206,6 @@ $ module start -f -p 42
   return 0;
 }
 
-int visual_slam_main(int argc, char *argv[]) {
+extern "C" __EXPORT int visual_slam_main(int argc, char *argv[]) {
   return VisualSlamModule::main(argc, argv);
 }

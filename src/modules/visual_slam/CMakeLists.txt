@@ -31,16 +31,19 @@
 #
 ############################################################################
 
+add_subdirectory(UKF)
+
 px4_add_module(
 	MODULE modules__visual_slam
 	MAIN visual_slam
 	COMPILE_FLAGS
-		#-DDEBUG_BUILD   # uncomment for PX4_DEBUG output
-		#-O0             # uncomment when debugging
+		-DDEBUG_BUILD   # uncomment for PX4_DEBUG output
+		-O0             # uncomment when debugging
 	STACK_MAIN 2000
 	SRCS
 		VisualSlam.cpp
 		VisualSlam.hpp
 	DEPENDS
 		px4_work_queue
+		visual_ukf
 	)
