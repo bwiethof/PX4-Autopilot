@@ -44,8 +44,10 @@ using namespace time_literals;
 // extern "C" __EXPORT int visual_slam_main(int argc, char *argv[]);
 
 class VisualSlamModule : public ModuleBase<VisualSlamModule>,
-                         public ModuleParams,
-                         public px4::ScheduledWorkItem {
+                         public ModuleParams/*,
+                         public px4::ScheduledWorkItem*/ {
+  //void Run() override;
+
 public:
   VisualSlamModule(int example_param, bool example_flag);
 
