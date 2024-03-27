@@ -33,20 +33,24 @@
 
 #pragma once
 
+#include "UKF/UKF.h"
+
 #include <px4_platform_common/module.h>
 #include <px4_platform_common/module_params.h>
 #include <px4_platform_common/px4_work_queue/ScheduledWorkItem.hpp>
 #include <uORB/SubscriptionInterval.hpp>
 #include <uORB/topics/parameter_update.h>
+#include <uORB/topics/sensor_gps.h>
 
 using namespace time_literals;
 
 // extern "C" __EXPORT int visual_slam_main(int argc, char *argv[]);
 
 class VisualSlamModule : public ModuleBase<VisualSlamModule>,
-                         public ModuleParams/*,
-                         public px4::ScheduledWorkItem*/ {
-  //void Run() override;
+                         public ModuleParams /*,
+                          public px4::ScheduledWorkItem*/
+{
+  // void Run() override;
 
 public:
   VisualSlamModule(int example_param, bool example_flag);
@@ -72,6 +76,7 @@ public:
   int print_status() override;
 
 private:
+  visukf::UKF _ukf{};
   /**
    * Check for parameter changes and update them if needed.
    * @param parameter_update_sub uorb subscription to parameter_update
@@ -88,4 +93,10 @@ private:
   // Subscriptions
   uORB::SubscriptionInterval _parameter_update_sub{ORB_ID(parameter_update),
                                                    1_s};
+
+
+	uORB::Subscription _vehicle_gps_position_sub{ORB_ID(vehicle_gps_position)};
+
+ public:
+  EIGEN_MAKE_ALIGNED_OPERATOR_NEW
 };
