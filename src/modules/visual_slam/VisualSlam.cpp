@@ -44,6 +44,9 @@ int VisualSlamModule::print_status() {
   PX4_INFO("Running");
   // TODO: print additional runtime information about the state of the module
 
+  const auto state = _ukf.state();
+  std::cout << state << std::endl;
+
   return 0;
 }
 
@@ -138,6 +141,13 @@ void VisualSlamModule::run() {
 
   while (!should_exit()) {
 
+    sensor_gps_s vehicle_gps_position;
+    if (_vehicle_gps_position_sub.update(&vehicle_gps_position)) {
+      _ukf.add(std::move(vehicle_gps_position));
+    }
+
+    _ukf.update();
+
     // wait for up to 1000ms for data
     int pret = px4_poll(fds, (sizeof(fds) / sizeof(fds[0])), 1000);
 
@@ -154,6 +164,9 @@ void VisualSlamModule::run() {
 
       struct sensor_combined_s sensor_combined;
       orb_copy(ORB_ID(sensor_combined), sensor_combined_sub, &sensor_combined);
+      const auto dt = sensor_combined.accelerometer_integral_dt;
+      (void)dt;
+
       // TODO: do something with the data...
     }
 
