@@ -34,15 +34,18 @@
 #pragma once
 
 #include "UKF/UKF.h"
+#include "modules/visual_slam/strapdown/strap_down.h"
 
 #include <px4_platform_common/module.h>
 #include <px4_platform_common/module_params.h>
 #include <px4_platform_common/px4_work_queue/ScheduledWorkItem.hpp>
 #include <uORB/SubscriptionInterval.hpp>
 #include <uORB/topics/parameter_update.h>
+#include <uORB/topics/sensor_combined.h>
 #include <uORB/topics/sensor_gps.h>
 
 using namespace time_literals;
+
 
 // extern "C" __EXPORT int visual_slam_main(int argc, char *argv[]);
 
@@ -77,12 +80,23 @@ public:
 
 private:
   visukf::UKF _ukf{};
+
+  visslam::strap_down::StrapDown _strapDown{};
   /**
    * Check for parameter changes and update them if needed.
    * @param parameter_update_sub uorb subscription to parameter_update
    * @param force for a parameter update
    */
   void parameters_update(bool force = false);
+
+  void strapDownStep(const sensor_combined_s &data);
+
+
+  void ukfStep(const sensor_combined_s&);
+
+
+  void step(const sensor_combined_s &sensorData);
+
 
   DEFINE_PARAMETERS((ParamInt<px4::params::SYS_AUTOSTART>)
                         _param_sys_autostart, /**< example parameter */
@@ -94,9 +108,8 @@ private:
   uORB::SubscriptionInterval _parameter_update_sub{ORB_ID(parameter_update),
                                                    1_s};
 
+  uORB::Subscription _vehicle_gps_position_sub{ORB_ID(vehicle_gps_position)};
 
-	uORB::Subscription _vehicle_gps_position_sub{ORB_ID(vehicle_gps_position)};
-
- public:
+public:
   EIGEN_MAKE_ALIGNED_OPERATOR_NEW
 };

@@ -8,7 +8,10 @@
 #pragma GCC diagnostic ignored "-Wfloat-equal"
 #include "sensor/GPS.h"
 #include "state/Position.h"
+#include "state/State.h"
 #include "state/Velocity.h"
+
+#include <chrono>
 
 #include <core/ukf.hpp>
 
@@ -18,10 +21,7 @@ class UKF {
 public:
   UKF();
 
-
-  void add(sensor_gps_s);
-
-  void update();
+  void update(const State &current, std::chrono::milliseconds dt);
 
   ukf::core::state::StateBase state() const;
 
@@ -29,7 +29,6 @@ private:
   ukf::core::Ukf<ukf::core::StateFields<Position, Velocity>> _impl{};
   ukf::core::SensorData<ukf::core::StaticFields<sensor::GPS>> _sensorData{};
 
-  sensor_gps_s _tempStorage{};
 public:
   EIGEN_MAKE_ALIGNED_OPERATOR_NEW
 };
