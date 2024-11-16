@@ -20,12 +20,11 @@ UKF::UKF() {
       initialState, initialP);
 }
 
-void UKF::add(sensor_gps_s gps_data) {
-  _tempStorage = gps_data;
-  _sensorData.setMeasurement<sensor::GPS>(std::move(gps_data));
+void UKF::update(const State &current, std::chrono::milliseconds ms) {
+  const auto dt =
+      std::chrono::duration_cast<std::chrono::duration<double>>(ms).count();
+  _impl.step(_sensorData, dt, current);
 }
-
-void UKF::update() { _impl.step(_sensorData, 0.1, _tempStorage); }
 
 ukf::core::state::StateBase UKF::state() const {
   return _impl.getState().matrix();

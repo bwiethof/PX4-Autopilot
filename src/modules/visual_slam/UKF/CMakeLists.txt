@@ -15,6 +15,7 @@ set(INCLUDE_FILES UKF.h
         math/coordinates.h
         state/Position_NED.cpp
         state/Position_NED.h
+        state/State.h
 )
 
 add_library(visual_ukf ${SOURCE_FILES} ${INCLUDE_FILES}

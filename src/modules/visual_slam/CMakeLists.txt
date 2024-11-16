@@ -32,6 +32,7 @@
 ############################################################################
 
 add_subdirectory(UKF)
+add_subdirectory(strapdown)
 
 px4_add_module(
 	MODULE modules__visual_slam
@@ -46,4 +47,5 @@ px4_add_module(
 	DEPENDS
 		px4_work_queue
 		visual_ukf
+		StrapDown
 	)

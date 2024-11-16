@@ -33,37 +33,39 @@
 
 #include "VisualSlam.hpp"
 
+#include <chrono>
 #include <px4_platform_common/getopt.h>
 #include <px4_platform_common/log.h>
 #include <px4_platform_common/posix.h>
 
 #include <uORB/topics/parameter_update.h>
 #include <uORB/topics/sensor_combined.h>
+#include <visual_slam/UKF/state/State.h>
+
+namespace {
+Eigen::Vector3d fromFloatArray(const float value[3]) {
+  return Eigen::Vector3f(value).cast<double>();
+}
+
+} // namespace
 
 int VisualSlamModule::print_status() {
   PX4_INFO("Running");
   // TODO: print additional runtime information about the state of the module
 
   const auto state = _ukf.state();
-  std::cout << state << std::endl;
+  const auto att = _strapDown.attitude();
+  const auto pos = _strapDown.position();
+  const auto vel = _strapDown.velocity();
+
+  std::cout << "pos: " << pos.value() << "\n";
+  std::cout << "vel: " << vel.value() << "\n";
+  std::cout << "att: " << att.value() << "\n";
 
   return 0;
 }
 
 int VisualSlamModule::custom_command(int argc, char *argv[]) {
-  /*
-  if (!is_running()) {
-          print_usage("not running");
-          return 1;
-  }
-
-  // additional custom commands can be handled like this:
-  if (!strcmp(argv[0], "do-something")) {
-          get_instance()->do_something();
-          return 0;
-  }
-   */
-
   return print_usage("unknown command");
 }
 
@@ -140,14 +142,6 @@ void VisualSlamModule::run() {
   parameters_update(true);
 
   while (!should_exit()) {
-
-    sensor_gps_s vehicle_gps_position;
-    if (_vehicle_gps_position_sub.update(&vehicle_gps_position)) {
-      _ukf.add(std::move(vehicle_gps_position));
-    }
-
-    _ukf.update();
-
     // wait for up to 1000ms for data
     int pret = px4_poll(fds, (sizeof(fds) / sizeof(fds[0])), 1000);
 
@@ -164,8 +158,8 @@ void VisualSlamModule::run() {
 
       struct sensor_combined_s sensor_combined;
       orb_copy(ORB_ID(sensor_combined), sensor_combined_sub, &sensor_combined);
-      const auto dt = sensor_combined.accelerometer_integral_dt;
-      (void)dt;
+
+      step(sensor_combined);
 
       // TODO: do something with the data...
     }
@@ -217,6 +211,45 @@ $ module start -f -p 42
   PRINT_MODULE_USAGE_DEFAULT_COMMANDS();
 
   return 0;
+}
+
+// Implements a time step
+// 1. compensate input accelerations (translation+rotation)
+// 2. calculate next state (strapdown)
+// 3. "publish" state
+// 4. Update error state
+void VisualSlamModule::step(const sensor_combined_s &sensorData) {
+  // ukf.getTranslAcceleration()
+  // ukf.getAngularRate();angular rate in
+  // TODO integrity check -> check timestamp
+  // TODO: verify difference between relative timestamps -> for now using acc
+
+  strapDownStep(sensorData);
+
+  ukfStep(sensorData);
+}
+
+void VisualSlamModule::ukfStep(const sensor_combined_s &data) {
+  visukf::State current = {.pos = _strapDown.position().value(),
+                           .vel = _strapDown.velocity().value(),
+                           .att = _strapDown.attitude().value()};
+
+  const auto dt = std::chrono::milliseconds(data.accelerometer_integral_dt);
+  _ukf.update(current, dt);
+}
+
+void VisualSlamModule::strapDownStep(const sensor_combined_s &data) {
+
+  const Eigen::Vector3d dAcc = Eigen::Vector3d::Zero();
+  const Eigen::Vector3d dOmega = Eigen::Vector3d::Zero();
+
+  // Use corrected sensor values
+  const visslam::strap_down::Sample sample{
+      .a_body = fromFloatArray(data.accelerometer_m_s2) + dAcc,
+      .omega_body = fromFloatArray(data.gyro_rad) + dOmega};
+
+  _strapDown.step(sample,
+                  std::chrono::milliseconds(data.accelerometer_integral_dt));
 }
 
 extern "C" __EXPORT int visual_slam_main(int argc, char *argv[]) {
