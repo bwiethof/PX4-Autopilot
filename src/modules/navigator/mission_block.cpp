@@ -55,8 +55,8 @@
 
 using matrix::wrap_pi;
 
-MissionBlock::MissionBlock(Navigator *navigator) :
-	NavigatorMode(navigator)
+MissionBlock::MissionBlock(Navigator *navigator, uint8_t navigator_state_id) :
+	NavigatorMode(navigator, navigator_state_id)
 {
 
 }
@@ -91,6 +91,7 @@ MissionBlock::is_mission_item_reached_or_completed()
 	case NAV_CMD_OBLIQUE_SURVEY:
 	case NAV_CMD_DO_SET_CAM_TRIGG_INTERVAL:
 	case NAV_CMD_SET_CAMERA_MODE:
+	case NAV_CMD_SET_CAMERA_SOURCE:
 	case NAV_CMD_SET_CAMERA_ZOOM:
 	case NAV_CMD_SET_CAMERA_FOCUS:
 	case NAV_CMD_DO_CHANGE_SPEED:
@@ -110,7 +111,8 @@ MissionBlock::is_mission_item_reached_or_completed()
 
 		if (int(_mission_item.params[0]) == 3) {
 			// transition to RW requested, only accept waypoint if vehicle state has changed accordingly
-			return _navigator->get_vstatus()->vehicle_type == vehicle_status_s::VEHICLE_TYPE_ROTARY_WING;
+			return _navigator->get_vstatus()->vehicle_type == vehicle_status_s::VEHICLE_TYPE_ROTARY_WING
+			       && !_navigator->get_vstatus()->in_transition_mode;
 
 		} else if (int(_mission_item.params[0]) == 4) {
 			// transition to FW requested, only accept waypoint if vehicle state has changed accordingly
@@ -411,7 +413,7 @@ MissionBlock::is_mission_item_reached_or_completed()
 	if (_waypoint_position_reached && !_waypoint_yaw_reached) {
 
 		if (_navigator->get_vstatus()->vehicle_type == vehicle_status_s::VEHICLE_TYPE_ROTARY_WING
-		    && PX4_ISFINITE(_navigator->get_yaw_acceptance(_mission_item.yaw))
+		    && _navigator->get_yaw_to_be_accepted(_mission_item.yaw)
 		    && _navigator->get_local_position()->heading_good_for_control) {
 
 			const float yaw_err = wrap_pi(_mission_item.yaw - _navigator->get_local_position()->heading);
@@ -420,14 +422,6 @@ MissionBlock::is_mission_item_reached_or_completed()
 			if (fabsf(yaw_err) < _navigator->get_yaw_threshold()
 			    || (_navigator->get_yaw_timeout() >= FLT_EPSILON && !_mission_item.force_heading)) {
 
-				_waypoint_yaw_reached = true;
-			}
-
-			// Always accept yaw during takeoff
-			// TODO: Ideally Navigator would handle a yaw reset and adjust its yaw setpoint, making the
-			// following no longer necessary.
-			// FlightTaskAuto is currently also ignoring the yaw setpoint during takeoff and thus "handling" it.
-			if (_mission_item.nav_cmd == vehicle_command_s::VEHICLE_CMD_NAV_TAKEOFF) {
 				_waypoint_yaw_reached = true;
 			}
 
@@ -473,8 +467,8 @@ MissionBlock::is_mission_item_reached_or_completed()
 							 && curr_sp_new->type == position_setpoint_s::SETPOINT_TYPE_LOITER
 							 && (_mission_item.force_heading || _mission_item.nav_cmd == NAV_CMD_WAYPOINT);
 
-			// can only enforce exit course if next waypoint is not within loiter radius of current waypoint
-			const bool exit_course_is_reachable = dist_current_next > 1.2f * curr_sp_new->loiter_radius;
+			// can only enforce exit course if next waypoint is not within loiter radius of current waypoint (with small margin)
+			const bool exit_course_is_reachable = dist_current_next > 1.05f * curr_sp_new->loiter_radius;
 
 			if (enforce_exit_course && exit_course_is_reachable) {
 
@@ -668,7 +662,6 @@ MissionBlock::mission_item_to_position_setpoint(const mission_item_s &item, posi
 	sp->lon = item.lon;
 	sp->alt = get_absolute_altitude_for_item(item);
 	sp->yaw = item.yaw;
-	sp->yaw_valid = PX4_ISFINITE(item.yaw);
 	sp->loiter_radius = (fabsf(item.loiter_radius) > NAV_EPSILON_POSITION) ? fabsf(item.loiter_radius) :
 			    _navigator->get_loiter_radius();
 	sp->loiter_direction_counter_clockwise = item.loiter_radius < 0;
@@ -680,6 +673,10 @@ MissionBlock::mission_item_to_position_setpoint(const mission_item_s &item, posi
 	} else {
 		sp->acceptance_radius = _navigator->get_default_acceptance_radius();
 	}
+
+	// by default, FW guidance logic will take alt acceptance from NAV_FW_ALT_RAD, in some special cases
+	// we override it after this
+	sp->alt_acceptance_radius = NAN;
 
 	sp->cruising_speed = _navigator->get_cruising_speed();
 	sp->cruising_throttle = _navigator->get_cruising_throttle();
@@ -694,6 +691,7 @@ MissionBlock::mission_item_to_position_setpoint(const mission_item_s &item, posi
 		break;
 
 	case NAV_CMD_TAKEOFF:
+	case NAV_CMD_VTOL_TAKEOFF:
 
 		// if already flying (armed and !landed) treat TAKEOFF like regular POSITION
 		if ((_navigator->get_vstatus()->arming_state == vehicle_status_s::ARMING_STATE_ARMED)
@@ -703,12 +701,12 @@ MissionBlock::mission_item_to_position_setpoint(const mission_item_s &item, posi
 
 		} else {
 			sp->type = position_setpoint_s::SETPOINT_TYPE_TAKEOFF;
+
+			// Don't set a yaw setpoint for takeoff, as Navigator doesn't handle the yaw reset.
+			// The yaw setpoint generation is handled by FlightTaskAuto.
+			sp->yaw = NAN;
 		}
 
-		break;
-
-	case NAV_CMD_VTOL_TAKEOFF:
-		sp->type = position_setpoint_s::SETPOINT_TYPE_TAKEOFF;
 		break;
 
 	case NAV_CMD_LAND:
@@ -747,7 +745,9 @@ MissionBlock::setLoiterItemFromCurrentPositionSetpoint(struct mission_item_s *it
 	item->lat = pos_sp_triplet->current.lat;
 	item->lon = pos_sp_triplet->current.lon;
 	item->altitude = pos_sp_triplet->current.alt;
-	item->loiter_radius = pos_sp_triplet->current.loiter_radius;
+	item->loiter_radius = pos_sp_triplet->current.loiter_direction_counter_clockwise ?
+			      -pos_sp_triplet->current.loiter_radius : pos_sp_triplet->current.loiter_radius;
+	item->yaw = pos_sp_triplet->current.yaw;
 }
 
 void
@@ -767,19 +767,20 @@ MissionBlock::setLoiterItemFromCurrentPosition(struct mission_item_s *item)
 	}
 
 	item->altitude = loiter_altitude_amsl;
-
 	item->loiter_radius = _navigator->get_loiter_radius();
+	item->yaw = NAN;
 }
 
 void
-MissionBlock::setLoiterItemFromCurrentPositionWithBreaking(struct mission_item_s *item)
+MissionBlock::setLoiterItemFromCurrentPositionWithBraking(struct mission_item_s *item)
 {
 	setLoiterItemCommonFields(item);
 
-	_navigator->calculate_breaking_stop(item->lat, item->lon, item->yaw);
+	_navigator->preproject_stop_point(item->lat, item->lon);
 
 	item->altitude = _navigator->get_global_position()->alt;
 	item->loiter_radius = _navigator->get_loiter_radius();
+	item->yaw = NAN;
 }
 
 void
@@ -803,7 +804,7 @@ MissionBlock::set_takeoff_item(struct mission_item_s *item, float abs_altitude)
 	/* use current position */
 	item->lat = _navigator->get_global_position()->lat;
 	item->lon = _navigator->get_global_position()->lon;
-	item->yaw = _navigator->get_local_position()->heading;
+	item->yaw = NAN;
 
 	item->altitude = abs_altitude;
 	item->altitude_is_relative = false;
@@ -831,9 +832,16 @@ MissionBlock::set_land_item(struct mission_item_s *item)
 	item->nav_cmd = NAV_CMD_LAND;
 
 	// set land item to current position
-	item->lat = _navigator->get_global_position()->lat;
-	item->lon = _navigator->get_global_position()->lon;
-	item->yaw = _navigator->get_local_position()->heading;
+	if (_navigator->get_local_position()->xy_global) {
+		item->lat = _navigator->get_global_position()->lat;
+		item->lon = _navigator->get_global_position()->lon;
+
+	} else {
+		item->lat = (double)NAN;
+		item->lon = (double)NAN;
+	}
+
+	item->yaw = NAN;
 
 	item->altitude = 0;
 	item->altitude_is_relative = false;
@@ -865,38 +873,8 @@ MissionBlock::set_vtol_transition_item(struct mission_item_s *item, const uint8_
 {
 	item->nav_cmd = NAV_CMD_DO_VTOL_TRANSITION;
 	item->params[0] = (float) new_mode;
-	item->params[1] = 0.0f;
-
-	// Keep yaw from previous mission item if valid, as that is containing the transition heading.
-	// If not valid use current yaw as yaw setpoint
-	if (!PX4_ISFINITE(item->yaw)) {
-		item->yaw = _navigator->get_local_position()->heading; // ideally that would be course and not heading
-	}
-
+	item->params[1] = 0.0f; // not immediate transition
 	item->autocontinue = true;
-}
-
-void
-MissionBlock::mission_apply_limitation(mission_item_s &item)
-{
-	// Limit altitude
-	const float maximum_altitude = _navigator->get_lndmc_alt_max();
-
-	/* do nothing if altitude max is negative */
-	if (maximum_altitude > 0.0f) {
-
-		/* absolute altitude */
-		float altitude_abs = item.altitude_is_relative
-				     ? item.altitude + _navigator->get_home_position()->alt
-				     : item.altitude;
-
-		/* limit altitude to maximum allowed altitude */
-		if ((maximum_altitude + _navigator->get_home_position()->alt) < altitude_abs) {
-			item.altitude = item.altitude_is_relative ?
-					maximum_altitude :
-					maximum_altitude + _navigator->get_home_position()->alt;
-		}
-	}
 }
 
 float
@@ -962,16 +940,15 @@ MissionBlock::initialize()
 	_mission_item.origin = ORIGIN_ONBOARD;
 }
 
-void MissionBlock::setLoiterToAltMissionItem(mission_item_s &item, const DestinationPosition &dest, float loiter_radius,
-		HeadingMode heading_mode) const
+void MissionBlock::setLoiterToAltMissionItem(mission_item_s &item, const PositionYawSetpoint &pos_yaw_sp,
+		float loiter_radius) const
 {
 	item.nav_cmd = NAV_CMD_LOITER_TO_ALT;
-	item.lat = dest.lat;
-	item.lon = dest.lon;
-	item.altitude = dest.alt;
+	item.lat = pos_yaw_sp.lat;
+	item.lon = pos_yaw_sp.lon;
+	item.altitude = pos_yaw_sp.alt;
 	item.altitude_is_relative = false;
-
-	item. yaw = setYawFromHeadingMode(dest, heading_mode);
+	item.yaw = pos_yaw_sp.yaw;
 
 	item.acceptance_radius = _navigator->get_acceptance_radius();
 	item.time_inside = 0.0f;
@@ -980,8 +957,8 @@ void MissionBlock::setLoiterToAltMissionItem(mission_item_s &item, const Destina
 	item.loiter_radius = loiter_radius;
 }
 
-void MissionBlock::setLoiterHoldMissionItem(mission_item_s &item, const DestinationPosition &dest, float loiter_time,
-		float loiter_radius, HeadingMode heading_mode) const
+void MissionBlock::setLoiterHoldMissionItem(mission_item_s &item, const PositionYawSetpoint &pos_yaw_sp,
+		float loiter_time, float loiter_radius) const
 {
 	const bool autocontinue = (loiter_time > -FLT_EPSILON);
 
@@ -992,12 +969,12 @@ void MissionBlock::setLoiterHoldMissionItem(mission_item_s &item, const Destinat
 		item.nav_cmd = NAV_CMD_LOITER_UNLIMITED;
 	}
 
-	item.lat = dest.lat;
-	item.lon = dest.lon;
-	item.altitude = dest.alt;
+	item.lat = pos_yaw_sp.lat;
+	item.lon = pos_yaw_sp.lon;
+	item.altitude = pos_yaw_sp.alt;
 	item.altitude_is_relative = false;
 
-	item. yaw = setYawFromHeadingMode(dest, heading_mode);
+	item.yaw = NAN;
 
 	item.acceptance_radius = _navigator->get_acceptance_radius();
 	item.time_inside = math::max(loiter_time, 0.0f);
@@ -1006,13 +983,12 @@ void MissionBlock::setLoiterHoldMissionItem(mission_item_s &item, const Destinat
 	item.loiter_radius = loiter_radius;
 }
 
-void MissionBlock::setMoveToPositionMissionItem(mission_item_s &item, const DestinationPosition &dest,
-		HeadingMode heading_mode) const
+void MissionBlock::setMoveToPositionMissionItem(mission_item_s &item, const PositionYawSetpoint &pos_yaw_sp) const
 {
 	item.nav_cmd = NAV_CMD_WAYPOINT;
-	item.lat = dest.lat;
-	item.lon = dest.lon;
-	item.altitude = dest.alt;
+	item.lat = pos_yaw_sp.lat;
+	item.lon = pos_yaw_sp.lon;
+	item.altitude = pos_yaw_sp.alt;
 	item.altitude_is_relative = false;
 
 	item.autocontinue = true;
@@ -1020,44 +996,20 @@ void MissionBlock::setMoveToPositionMissionItem(mission_item_s &item, const Dest
 	item.time_inside = 0.f;
 	item.origin = ORIGIN_ONBOARD;
 
-	item. yaw = setYawFromHeadingMode(dest, heading_mode);
+	item.yaw = pos_yaw_sp.yaw;
 }
 
-void MissionBlock::setLandMissionItem(mission_item_s &item, const DestinationPosition &dest,
-				      HeadingMode heading_mode) const
+void MissionBlock::setLandMissionItem(mission_item_s &item, const PositionYawSetpoint &pos_yaw_sp) const
 {
 	item.nav_cmd = NAV_CMD_LAND;
-	item.lat = dest.lat;
-	item.lon = dest.lon;
-	item.altitude = dest.alt;
-
-	if (heading_mode == HeadingMode::CURRENT_HEADING) {
-		item.yaw = _navigator->get_local_position()->heading;
-
-	} else {
-		item.yaw = dest.yaw;
-	}
-
+	item.lat = pos_yaw_sp.lat;
+	item.lon = pos_yaw_sp.lon;
+	item.altitude = pos_yaw_sp.alt;
+	item.yaw = pos_yaw_sp.yaw;
 	item.acceptance_radius = _navigator->get_acceptance_radius();
 	item.time_inside = 0.0f;
 	item.autocontinue = true;
 	item.origin = ORIGIN_ONBOARD;
-}
-
-float MissionBlock::setYawFromHeadingMode(const DestinationPosition &dest, HeadingMode heading_mode) const
-{
-	float desired_yaw(_navigator->get_local_position()->heading);
-
-	if (heading_mode == HeadingMode::NAVIGATION_HEADING) {
-		desired_yaw = get_bearing_to_next_waypoint(_navigator->get_global_position()->lat,
-				_navigator->get_global_position()->lon, dest.lat, dest.lon);
-
-	} else if (heading_mode == HeadingMode::DESTINATION_HEADING) {
-		desired_yaw = dest.yaw;
-
-	}
-
-	return desired_yaw;
 }
 
 void MissionBlock::startPrecLand(uint16_t land_precision)
@@ -1069,5 +1021,63 @@ void MissionBlock::startPrecLand(uint16_t land_precision)
 	} else { //_mission_item.land_precision == 2
 		_navigator->get_precland()->set_mode(PrecLandMode::Required);
 		_navigator->get_precland()->on_activation();
+	}
+}
+
+void MissionBlock::updateAltToAvoidTerrainCollisionAndRepublishTriplet(mission_item_s mission_item)
+{
+	// Avoid flying into terrain using the distance sensor. Enable through the parameter NAV_MIN_GND_DIST.
+	// Only active during commanded descents with vz>0 (to prevent climb-aways), excluding landing and VTOL transitions.
+	// It changes the altitude setpoint in the triplet to maintain the current altitude and republish the triplet.
+	// We also change the mission item altitude used for acceptance calculations to prevent getting stuck in a loop.
+
+	// This threshold is needed to prevent the check from re-triggering due to small altitude over-shoots while
+	// tracking the new altitude setpoint.
+	static constexpr float kAltitudeDifferenceForDescentCondition = 2.f;
+
+
+	if (_navigator->get_nav_min_gnd_dist_param() > FLT_EPSILON && _mission_item.nav_cmd != NAV_CMD_LAND
+	    && _mission_item.nav_cmd != NAV_CMD_VTOL_LAND && _mission_item.nav_cmd != NAV_CMD_DO_VTOL_TRANSITION
+	    && _mission_item.nav_cmd != NAV_CMD_IDLE
+	    && _navigator->get_local_position()->dist_bottom_valid
+	    && _navigator->get_local_position()->dist_bottom < _navigator->get_nav_min_gnd_dist_param()
+	    && _navigator->get_local_position()->vz > FLT_EPSILON
+	    && _navigator->get_global_position()->alt - get_absolute_altitude_for_item(mission_item) >
+	    kAltitudeDifferenceForDescentCondition) {
+
+		_navigator->sendWarningDescentStoppedDueToTerrain();
+
+		struct position_setpoint_s *curr_sp = &_navigator->get_position_setpoint_triplet()->current;
+		curr_sp->alt = _navigator->get_global_position()->alt;
+		_navigator->set_position_setpoint_triplet_updated();
+
+		_mission_item.altitude = _navigator->get_global_position()->alt;
+		_mission_item.altitude_is_relative = false;
+	}
+}
+
+void MissionBlock::updateFailsafeChecks()
+{
+	updateMaxHaglFailsafe();
+}
+
+void MissionBlock::updateMaxHaglFailsafe()
+{
+	const float target_alt = _navigator->get_position_setpoint_triplet()->current.alt;
+
+	if (_navigator->get_global_position()->terrain_alt_valid
+	    && ((target_alt - _navigator->get_global_position()->terrain_alt) > _navigator->get_local_position()->hagl_max)) {
+		// Handle case where the altitude setpoint is above the maximum HAGL (height above ground level)
+		mavlink_log_info(_navigator->get_mavlink_log_pub(), "Target altitude higher than max HAGL\t");
+		events::send(events::ID("navigator_fail_max_hagl"), events::Log::Error, "Target altitude higher than max HAGL");
+
+		_navigator->trigger_hagl_failsafe(getNavigatorStateId());
+
+		// While waiting for a failsafe action from commander, keep the curren position
+		setLoiterItemFromCurrentPosition(&_mission_item);
+
+		mission_item_to_position_setpoint(_mission_item, &_navigator->get_position_setpoint_triplet()->current);
+
+		_navigator->set_position_setpoint_triplet_updated();
 	}
 }

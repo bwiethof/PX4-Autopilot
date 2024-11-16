@@ -43,7 +43,7 @@
 #include <px4_platform_common/events.h>
 
 Takeoff::Takeoff(Navigator *navigator) :
-	MissionBlock(navigator)
+	MissionBlock(navigator, vehicle_status_s::NAVIGATION_STATE_AUTO_TAKEOFF)
 {
 }
 
@@ -68,7 +68,7 @@ Takeoff::on_active()
 	} else if (is_mission_item_reached_or_completed() && !_navigator->get_mission_result()->finished) {
 		_navigator->get_mission_result()->finished = true;
 		_navigator->set_mission_result_updated();
-		_navigator->mode_completed(vehicle_status_s::NAVIGATION_STATE_AUTO_TAKEOFF);
+		_navigator->mode_completed(getNavigatorStateId());
 
 		position_setpoint_triplet_s *pos_sp_triplet = _navigator->get_position_setpoint_triplet();
 
@@ -84,8 +84,6 @@ Takeoff::on_active()
 				setLoiterItemFromCurrentPosition(&_mission_item);
 			}
 		}
-
-		mission_apply_limitation(_mission_item);
 
 		mission_item_to_position_setpoint(_mission_item, &pos_sp_triplet->current);
 
@@ -129,11 +127,9 @@ Takeoff::set_takeoff_position()
 
 	// convert mission item to current setpoint
 	struct position_setpoint_triplet_s *pos_sp_triplet = _navigator->get_position_setpoint_triplet();
-	mission_apply_limitation(_mission_item);
 	mission_item_to_position_setpoint(_mission_item, &pos_sp_triplet->current);
 
 	pos_sp_triplet->previous.valid = false;
-	pos_sp_triplet->current.yaw_valid = true;
 	pos_sp_triplet->next.valid = false;
 
 	if (rep->current.valid) {

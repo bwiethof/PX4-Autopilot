@@ -58,6 +58,7 @@ from px_generate_uorb_topic_helper import * # this is in Tools/
 
 uorb_struct = '%s_s'%name_snake_case
 
+message_hash = get_message_hash(spec.parsed_fields(), search_path)
 sorted_fields = sorted(spec.parsed_fields(), key=sizeof_field_type, reverse=True)
 struct_size, padding_end_size = add_padding_bytes(sorted_fields, search_path)
 }@
@@ -72,9 +73,16 @@ struct_size, padding_end_size = add_padding_bytes(sorted_fields, search_path)
 #include <lib/matrix/matrix/math.hpp>
 #include <lib/mathlib/mathlib.h>
 
+@{
+queue_length = 1
+for constant in spec.constants:
+	if constant.name == 'ORB_QUEUE_LENGTH':
+		queue_length = constant.val
+}@
+
 @[for topic in topics]@
 static_assert(static_cast<orb_id_size_t>(ORB_ID::@topic) == @(all_topics.index(topic)), "ORB_ID index mismatch");
-ORB_DEFINE(@topic, struct @uorb_struct, @(struct_size-padding_end_size), static_cast<orb_id_size_t>(ORB_ID::@topic));
+ORB_DEFINE(@topic, struct @uorb_struct, @(struct_size-padding_end_size), @(message_hash)u, static_cast<orb_id_size_t>(ORB_ID::@topic), @queue_length);
 @[end for]
 
 void print_message(const orb_metadata *meta, const @uorb_struct& message)
