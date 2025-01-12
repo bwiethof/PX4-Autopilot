@@ -5,6 +5,7 @@
 #ifndef PX4_STRAP_DOWN_H
 #define PX4_STRAP_DOWN_H
 
+#include "earth_model.h"
 #include "entities.h"
 #include <chrono>
 #include <eigen3/Eigen/Core>
@@ -18,22 +19,31 @@ namespace strap_down {
  * IMU Sample
  */
 class StrapDown {
+  // State shall represent the current state in ECI frame including the
+  // transformation from body to ECI
   struct State {
-    Eigen::Quaterniond att; // Body -> world
-    Eigen::Vector3d pos;    // NED
-    Eigen::Vector3d vel;    // NED
-  } state;
+    Eigen::Quaterniond att; // Body -> ECI
+    Eigen::Vector3d pos;    // ECI
+    Eigen::Vector3d vel;    // ECI
+  } _state;
 
 public:
   StrapDown() = default;
   ~StrapDown() = default;
 
-  // make position accessible
   Position position() const;
   Velocity velocity() const;
   Attitude attitude() const;
 
   void step(const Sample &, const std::chrono::milliseconds &dt);
+
+  void initialize(const State&);
+
+  bool isInitialized() const { return _initialized; }
+
+private:
+  bool _initialized{false};
+  Earth _earth{};
 };
 
 } // namespace strap_down

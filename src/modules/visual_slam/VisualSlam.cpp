@@ -133,6 +133,7 @@ VisualSlamModule::VisualSlamModule(int example_param, bool example_flag)
 void VisualSlamModule::run() {
   // Example: run the loop synchronized to the sensor_combined topic publication
   int sensor_combined_sub = orb_subscribe(ORB_ID(sensor_combined));
+  int sensor_gps_sub = orb_subscribe(ORB_ID(sensor_gps));
 
   px4_pollfd_struct_t fds[1];
   fds[0].fd = sensor_combined_sub;
@@ -158,10 +159,11 @@ void VisualSlamModule::run() {
 
       struct sensor_combined_s sensor_combined;
       orb_copy(ORB_ID(sensor_combined), sensor_combined_sub, &sensor_combined);
+      if (!_strapDown.isInitialized()) {
+        // initialize
+      }
 
       step(sensor_combined);
-
-      // TODO: do something with the data...
     }
 
     parameters_update();

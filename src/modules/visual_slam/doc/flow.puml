@@ -1,0 +1,10 @@
+@startuml
+start
+:Read available Data;
+:Get current Error state;
+:Correct Accelerations;
+:Strap down;
+:ukf error state update;
+
+end
+@enduml

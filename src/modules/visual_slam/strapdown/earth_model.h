@@ -9,16 +9,17 @@
 namespace visslam {
 
 struct Gravitation {
-  explicit Gravitation(double mass) : _mass(mass) {}
-  static constexpr double gravitationalConstant = 0.1;
+  explicit Gravitation(double mass)
+      : _mass(mass), muh(gravitationalConstant * _mass) {}
   Eigen::Vector<double, 3>
   calculate(const Eigen::Vector<double, 3> &pos) const {
-    const double muh = gravitationalConstant * _mass;
     return pos * muh / pos.norm();
   }
 
 private:
+  static constexpr double gravitationalConstant = 6.67430e-11;
   double _mass{};
+  double muh{};
 };
 
 class Earth {
@@ -27,12 +28,13 @@ public:
 
   Eigen::Vector3d gravitation(const Eigen::Vector3d &pos) const;
 
+  // Angular velocity of the earth in ECI frame
   Eigen::Vector3d angularVelocity() const;
 
 private:
   Gravitation _gravitation;
 
-  Eigen::Vector3d _angularVelocity;
+  double _angularVelocity;
 };
 
 } // namespace visslam

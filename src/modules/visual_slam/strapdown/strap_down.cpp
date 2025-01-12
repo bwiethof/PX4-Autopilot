@@ -47,31 +47,36 @@ asSkewSymmetric(const Eigen::MatrixBase<VectorType> &vec) {
 using std::chrono::milliseconds;
 using std::chrono::seconds;
 
+/*
+ *
+ */
 void StrapDown::step(const Sample &sample, const milliseconds &dt_ms) {
-  State localState = state;
+  State localState = _state; // in ECI
 
   const auto dt =
       std::chrono::duration_cast<std::chrono::duration<double>>(dt_ms).count();
 
   // create copy to work on
-  localState.pos += state.vel * dt;
+  localState.pos += _state.vel * dt;
 
   const Eigen::Vector<double, 3> gravitation =
-      earthGravitation.calculate(localState.pos);
+      _earth.gravitation(localState.pos);
+
+  // TODO: where do I get this from, for now: full trust in model === no bias
   const Eigen::Vector<double, 3> gravitation_bias{0, 0, 0};
 
   const Eigen::Matrix<double, 3, 3> R_w = localState.att.toRotationMatrix();
 
-  const Eigen::Vector<double, 3> omega_m{
-      1, 1, 1}; // angular velocity of earth (given) => combining the earth
-                // related parameter in class? (mass, angular rate,...)
+  const Eigen::Vector<double, 3> omega_m = _earth.angularVelocity();
 
+  // vel in eci = body acc to ECI frame + corrected gravitation -  coriolis
+  // force in ECI
   localState.vel += (R_w * sample.a_body + gravitation + gravitation_bias -
                      omega_m.cross(localState.vel)) *
                     dt;
 
   // Potential optimization:
-  // Evaluation of skewsymmetric is done after everything is done
+  // Evaluation of skew symmetric is done after everything is done
   const Eigen::Matrix<double, 3, 3> attitudeMatrix =
       (R_w * asSkewSymmetric(sample.omega_body) -
        asSkewSymmetric(omega_m) * R_w) *
@@ -80,14 +85,19 @@ void StrapDown::step(const Sample &sample, const milliseconds &dt_ms) {
   localState.att = Eigen::Quaterniond(attitudeMatrix).normalized();
 
   // finally update the actual state
-  state = localState;
+  _state = localState;
 }
 
-Position StrapDown::position() const { return Position{state.pos}; }
+void StrapDown::initialize(const State &initialState) {
+  _state = initialState;
+  _initialized = true;
+}
 
-Velocity StrapDown::velocity() const { return Velocity{state.vel}; }
+Position StrapDown::position() const { return Position{_state.pos}; }
 
-Attitude StrapDown::attitude() const { return Attitude{state.att}; }
+Velocity StrapDown::velocity() const { return Velocity{_state.vel}; }
+
+Attitude StrapDown::attitude() const { return Attitude{_state.att}; }
 
 } // namespace strap_down
 } // namespace visslam
